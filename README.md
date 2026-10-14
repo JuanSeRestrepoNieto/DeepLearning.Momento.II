@@ -9,8 +9,8 @@ Clasificación de 6 especies de aves con una Red Neuronal Convolucional en PyTor
 
 | Archivo | Contenido |
 |---|---|
-| `loader.py` | `BirdsDataset`, `Loader` (split estratificado 70/15/15, Resize 128 + ToTensor + Normalize), descarga del dataset |
-| `model_cnn.py` | `CNNModel`: 4 bloques Conv-BN-ReLU-MaxPool + 2 capas densas |
+| `loader.py` | `BirdsDataset`, `Loader` (división aleatoria 70/15/15 con `random_split`, Resize 128 + ToTensor + Normalize), descarga del dataset |
+| `model_cnn.py` | `CNNModel`: 4 bloques Conv-ReLU-MaxPool + 2 capas densas |
 | `model_mlp.py` | `MLPModel` (comparación de parámetros) |
 | `train_model.py` | `fit`, `evaluate`, `predict`, `plot_history`; ejecutable por CLI |
 | `metrics.py` | Matriz de confusión, precision/recall/F1, especificidad, AUC-ROC, visualización de predicciones |

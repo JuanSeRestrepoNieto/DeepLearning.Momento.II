@@ -2,8 +2,8 @@ import torch
 import os
 from PIL import Image
 from torch.utils.data import Dataset, DataLoader, Subset
+from torch.utils.data import random_split
 from torchvision import transforms
-from sklearn.model_selection import train_test_split
 import numpy as np
 
 
@@ -131,22 +131,22 @@ class Loader():
         # Dataset sin transformaciones, solo para conocer etiquetas y clases
         base_dataset    = BirdsDataset(root_dir)
         self.classes    = base_dataset.classes
-        targets         = np.array(base_dataset.targets)
         indices         = np.arange(len(base_dataset))
 
-        # División estratificada: train / (val + test), luego val / test
-        self.train_idx, temp_idx = train_test_split(
+        # Tamaños
+        train_size  = int(train_frac * len(base_dataset))
+        val_size    = int(val_frac * len(base_dataset))
+        test_size   = len(base_dataset) - train_size - val_size
+
+        # División aleatoria (con semilla para que sea reproducible)
+        train_split, val_split, test_split = random_split(
             indices,
-            test_size=val_frac + test_frac,
-            stratify=targets,
-            random_state=seed,
+            [train_size, val_size, test_size],
+            generator=torch.Generator().manual_seed(seed),
         )
-        self.val_idx, self.test_idx = train_test_split(
-            temp_idx,
-            test_size=test_frac / (val_frac + test_frac),
-            stratify=targets[temp_idx],
-            random_state=seed,
-        )
+        self.train_idx  = np.array(train_split.indices)
+        self.val_idx    = np.array(val_split.indices)
+        self.test_idx   = np.array(test_split.indices)
 
         # Media y desviación estándar calculadas solo con el conjunto de entrenamiento
         raw_transform = transforms.Compose([

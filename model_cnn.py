@@ -24,19 +24,15 @@ class CNNModel(nn.Module):
 
         # Bloque 1
         self.conv1  = nn.Conv2d(in_channels, 32, kernel_size=3, stride=1, padding=1)
-        self.bn1    = nn.BatchNorm2d(32)
 
         # Bloque 2
         self.conv2  = nn.Conv2d(32, 64, kernel_size=3, stride=1, padding=1)
-        self.bn2    = nn.BatchNorm2d(64)
 
         # Bloque 3
         self.conv3  = nn.Conv2d(64, 128, kernel_size=3, stride=1, padding=1)
-        self.bn3    = nn.BatchNorm2d(128)
 
         # Bloque 4
         self.conv4  = nn.Conv2d(128, 256, kernel_size=3, stride=1, padding=1)
-        self.bn4    = nn.BatchNorm2d(256)
 
         self.pool           = nn.MaxPool2d(kernel_size=2, stride=2)
         self.dropout_conv   = nn.Dropout2d(0.2)
@@ -62,19 +58,19 @@ class CNNModel(nn.Module):
         maps = []
 
         # [B, 3, 128, 128] -> [B, 32, 64, 64]
-        out = self.pool(self.relu(self.bn1(self.conv1(x))))
+        out = self.pool(self.relu(self.conv1(x)))
         maps.append(out)
 
         # -> [B, 64, 32, 32]
-        out = self.pool(self.relu(self.bn2(self.conv2(out))))
+        out = self.pool(self.relu(self.conv2(out)))
         maps.append(out)
 
         # -> [B, 128, 16, 16]
-        out = self.dropout_conv(self.pool(self.relu(self.bn3(self.conv3(out)))))
+        out = self.dropout_conv(self.pool(self.relu(self.conv3(out))))
         maps.append(out)
 
         # -> [B, 256, 8, 8]
-        out = self.dropout_conv(self.pool(self.relu(self.bn4(self.conv4(out)))))
+        out = self.dropout_conv(self.pool(self.relu(self.conv4(out))))
         maps.append(out)
 
         return maps

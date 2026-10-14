@@ -2,15 +2,10 @@ from loader import Loader, get_data_dir
 from model_cnn import CNNModel
 from model_mlp import MLPModel
 import argparse
-import copy
-import os
 import random
 import numpy as np
 import torch
 import matplotlib.pyplot as plt
-
-
-CHECKPOINT_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "checkpoints")
 
 
 def set_seed(seed=42):
@@ -65,7 +60,7 @@ def train_one_epoch(model, loader, criterion, optimizer, device):
 
 def evaluate(model, loader, criterion, device):
 
-    # Modo evaluación: desactiva Dropout y usa las estadísticas fijas de BatchNorm
+    # Modo evaluación: desactiva Dropout
     model.eval()
     running_loss    = 0.0
     correct         = 0
@@ -94,15 +89,13 @@ def evaluate(model, loader, criterion, device):
     return running_loss / len(loader), 100 * correct / total
 
 
-def fit(model, train_loader, val_loader, criterion, optimizer, device, num_epochs,
-        checkpoint_path=None, verbose=True):
-    """Entrena el modelo y conserva los pesos de la época con menor Validation Loss."""
+def fit(model, train_loader, val_loader, criterion, optimizer, device, num_epochs, verbose=True):
+    """Entrena el modelo y evalúa sobre validación al final de cada época."""
 
     history = {"train_loss": [], "train_acc": [], "val_loss": [], "val_acc": []}
 
     best_val_loss   = float("inf")
     best_epoch      = 0
-    best_state      = None
 
     for epoch in range(num_epochs):
 
@@ -117,7 +110,6 @@ def fit(model, train_loader, val_loader, criterion, optimizer, device, num_epoch
         if val_loss < best_val_loss:
             best_val_loss   = val_loss
             best_epoch      = epoch + 1
-            best_state      = copy.deepcopy(model.state_dict())
 
         if verbose:
             print(
@@ -129,15 +121,9 @@ def fit(model, train_loader, val_loader, criterion, optimizer, device, num_epoch
                 + (" *" if best_epoch == epoch + 1 else "")
             )
 
+    # Época con menor Validation Loss (para el análisis de las curvas)
     history["best_epoch"]       = best_epoch
     history["best_val_loss"]    = best_val_loss
-
-    if checkpoint_path is not None:
-        os.makedirs(os.path.dirname(checkpoint_path), exist_ok=True)
-        torch.save(best_state, checkpoint_path)
-
-    # Dejar el modelo con los pesos de la mejor época
-    model.load_state_dict(best_state)
 
     return history
 
@@ -177,7 +163,7 @@ def plot_history(history, path=None, show=True):
     plt.plot(epochs, history["train_loss"], label="Train Loss")
     plt.plot(epochs, history["val_loss"], label="Val Loss")
     if best:
-        plt.axvline(best, color="gray", linestyle="--", label=f"Mejor época ({best})")
+        plt.axvline(best, color="gray", linestyle="--", label=f"Menor Val Loss (época {best})")
     plt.title("Training Loss vs. Validation Loss")
     plt.xlabel("Epoch")
     plt.ylabel("Loss")
@@ -187,7 +173,7 @@ def plot_history(history, path=None, show=True):
     plt.plot(epochs, history["train_acc"], label="Train Accuracy")
     plt.plot(epochs, history["val_acc"], label="Val Accuracy")
     if best:
-        plt.axvline(best, color="gray", linestyle="--", label=f"Mejor época ({best})")
+        plt.axvline(best, color="gray", linestyle="--", label=f"Menor Val Loss (época {best})")
     plt.title("Training Accuracy vs. Validation Accuracy")
     plt.xlabel("Epoch")
     plt.ylabel("Accuracy (%)")
@@ -244,15 +230,12 @@ if __name__ == "__main__":
 
     # Compilar el modelo
     criterion = torch.nn.CrossEntropyLoss()
-    optimizer = torch.optim.Adam(model.parameters(), lr=args.lr, weight_decay=1e-4)
+    optimizer = torch.optim.Adam(model.parameters(), lr=args.lr)
 
-    history = fit(
-        model, train_loader, val_loader, criterion, optimizer, device, args.epochs,
-        checkpoint_path=os.path.join(CHECKPOINT_DIR, f"best_{args.model.lower()}.pt"),
-    )
-    print(f"Mejor época: {history['best_epoch']} (Val Loss: {history['best_val_loss']:.4f})")
+    history = fit(model, train_loader, val_loader, criterion, optimizer, device, args.epochs)
+    print(f"Época con menor Val Loss: {history['best_epoch']} ({history['best_val_loss']:.4f})")
 
-    # Test del modelo (con los pesos de la mejor época)
+    # Test del modelo
     test_loss, test_accuracy = evaluate(model, test_loader, criterion, device)
     print(f"Test Loss: {test_loss:.4f} Test Accuracy: {test_accuracy:.2f}%")
 

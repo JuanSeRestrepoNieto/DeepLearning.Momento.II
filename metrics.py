@@ -4,7 +4,6 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 from sklearn.metrics import (
     accuracy_score,
-    classification_report,
     confusion_matrix,
     roc_auc_score,
     roc_curve,
@@ -31,22 +30,8 @@ def plot_confusion_matrix(y_true, y_pred, classes, path=None, title="Matriz de c
     return cm
 
 
-def report(y_true, y_pred, classes):
-    """Accuracy, Precision, Recall y F1-Score por clase y promedios macro/weighted."""
-
-    return pd.DataFrame(
-        classification_report(
-            y_true, y_pred,
-            labels=range(len(classes)),
-            target_names=classes,
-            output_dict=True,
-            zero_division=0,
-        )
-    ).T
-
-
-def one_vs_rest_metrics(cm, classes):
-    """TP, FP, FN, TN por clase (una clase positiva vs. el resto) y métricas derivadas."""
+def per_class_metrics(cm, classes):
+    """TP, FP, FN, TN por clase (esa clase como positiva y el resto como negativas) y métricas derivadas."""
 
     total   = cm.sum()
     rows    = []
@@ -80,21 +65,23 @@ def one_vs_rest_metrics(cm, classes):
 
 
 def summary_metrics(y_true, y_pred, y_prob, classes):
-    """Métricas globales: accuracy, promedios macro y AUC-ROC one-vs-rest."""
+    """Accuracy global y promedio entre clases de Precision, Recall, F1-Score y AUC-ROC."""
 
-    rep = report(y_true, y_pred, classes)
+    per_class   = per_class_metrics(confusion_matrix(y_true, y_pred, labels=range(len(classes))), classes)
+    aucs        = [roc_auc_score((y_true == i).astype(int), y_prob[:, i]) for i in range(len(classes))]
 
     return pd.Series({
-        "Accuracy":             accuracy_score(y_true, y_pred),
-        "Precision (macro)":    rep.loc["macro avg", "precision"],
-        "Recall (macro)":       rep.loc["macro avg", "recall"],
-        "F1-Score (macro)":     rep.loc["macro avg", "f1-score"],
-        "AUC-ROC (macro OvR)":  roc_auc_score(y_true, y_prob, multi_class="ovr", average="macro"),
+        "Accuracy":                 accuracy_score(y_true, y_pred),
+        "Precision (promedio)":     per_class["Precision"].mean(),
+        "Recall (promedio)":        per_class["Recall (Sensibilidad)"].mean(),
+        "Especificidad (promedio)": per_class["Especificidad"].mean(),
+        "F1-Score (promedio)":      per_class["F1-Score"].mean(),
+        "AUC-ROC (promedio)":       np.mean(aucs),
     })
 
 
 def plot_roc_curves(y_true, y_prob, classes, path=None):
-    """Curva ROC de cada clase (una clase vs. el resto) con su AUC."""
+    """Curva ROC de cada clase (esa clase como positiva y el resto como negativas) con su AUC."""
 
     fig = plt.figure(figsize=(7, 6))
 
@@ -106,7 +93,7 @@ def plot_roc_curves(y_true, y_prob, classes, path=None):
     plt.plot([0, 1], [0, 1], "k--", label="Clasificador aleatorio")
     plt.xlabel("Tasa de falsos positivos (1 - Especificidad)")
     plt.ylabel("Tasa de verdaderos positivos (Sensibilidad)")
-    plt.title("Curvas ROC (one-vs-rest)")
+    plt.title("Curvas ROC por clase")
     plt.legend(fontsize=8)
     plt.tight_layout()
 
