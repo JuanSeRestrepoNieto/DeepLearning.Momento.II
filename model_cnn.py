@@ -1,53 +1,89 @@
 import torch
 import torch.nn as nn
 
+
+def conv_output_size(input_size, kernel_size, padding=0, stride=1):
+    """Output Shape = floor((input - kernel + 2 * padding) / stride) + 1"""
+
+    return (input_size - kernel_size + 2 * padding) // stride + 1
+
+
+def count_parameters(model):
+
+    return sum(
+        p.numel()
+        for p in model.parameters()
+        if p.requires_grad
+    )
+
+
 class CNNModel(nn.Module):
 
-    def __init__(self, num_classes=10):
+    def __init__(self, num_classes=6, in_channels=3, img_size=128):
         super().__init__()
 
         # Bloque 1
-        self.conv1 = nn.Conv2d(3, 32, kernel_size=3, padding=1)
+        self.conv1  = nn.Conv2d(in_channels, 32, kernel_size=3, stride=1, padding=1)
+        self.bn1    = nn.BatchNorm2d(32)
 
         # Bloque 2
-        self.conv2 = nn.Conv2d(32, 64, kernel_size=3, padding=1)
+        self.conv2  = nn.Conv2d(32, 64, kernel_size=3, stride=1, padding=1)
+        self.bn2    = nn.BatchNorm2d(64)
 
         # Bloque 3
-        self.conv3 = nn.Conv2d(64, 128, kernel_size=3, padding=1)
+        self.conv3  = nn.Conv2d(64, 128, kernel_size=3, stride=1, padding=1)
+        self.bn3    = nn.BatchNorm2d(128)
 
-        self.dropout_conv = nn.Dropout2d(0.2)
+        # Bloque 4
+        self.conv4  = nn.Conv2d(128, 256, kernel_size=3, stride=1, padding=1)
+        self.bn4    = nn.BatchNorm2d(256)
 
-        self.pool = nn.MaxPool2d(kernel_size=2, stride=2)
+        self.pool           = nn.MaxPool2d(kernel_size=2, stride=2)
+        self.dropout_conv   = nn.Dropout2d(0.2)
+
+        # Tamaño espacial después de los 4 bloques (conv "same" + pool 2x2): 128 -> 64 -> 32 -> 16 -> 8
+        size = img_size
+        for _ in range(4):
+            size = conv_output_size(size, kernel_size=3, padding=1, stride=1)
+            size = conv_output_size(size, kernel_size=2, padding=0, stride=2)
+
+        self.flatten_size = 256 * size * size
 
         # Clasificador
-        self.fc1        = nn.Linear(128 * 4 * 4, 256)
+        self.fc1        = nn.Linear(self.flatten_size, 128)
         self.dropout    = nn.Dropout(0.5)
-        self.fc2        = nn.Linear(256, num_classes)
+        self.fc2        = nn.Linear(128, num_classes)
 
         self.relu       = nn.ReLU()
 
+    def features(self, x):
+        """Etapa de extracción de características; retorna los mapas de cada bloque."""
+
+        maps = []
+
+        # [B, 3, 128, 128] -> [B, 32, 64, 64]
+        out = self.pool(self.relu(self.bn1(self.conv1(x))))
+        maps.append(out)
+
+        # -> [B, 64, 32, 32]
+        out = self.pool(self.relu(self.bn2(self.conv2(out))))
+        maps.append(out)
+
+        # -> [B, 128, 16, 16]
+        out = self.dropout_conv(self.pool(self.relu(self.bn3(self.conv3(out)))))
+        maps.append(out)
+
+        # -> [B, 256, 8, 8]
+        out = self.dropout_conv(self.pool(self.relu(self.bn4(self.conv4(out)))))
+        maps.append(out)
+
+        return maps
 
     def forward(self, x):
 
-        # [B, 3, 32, 32] -> [B, 32, 16, 16]
-        out = self.conv1(x)
-        out = self.relu(out)
-        out = self.pool(out)
+        out = self.features(x)[-1]
 
-        # -> [B, 64, 8, 8]
-        out = self.conv2(out)
-        out = self.relu(out)
-        out = self.pool(out)
-        out = self.dropout_conv(out)
-       
-        # -> [B, 128, 4, 4]
-        out = self.conv3(out)
-        out = self.relu(out)
-        out = self.pool(out)
-        out = self.dropout_conv(out)
-        
-
-        # Flatten
+        # Flatten: [B, 256, 8, 8] -> [B, 16384]
         out = torch.flatten(out, 1)
 
         # Clasificador
@@ -62,19 +98,12 @@ class CNNModel(nn.Module):
 if __name__ == "__main__":
 
     # Crear un modelo CNN
-    model = CNNModel(num_classes=10)
+    model = CNNModel(num_classes=6, img_size=128)
 
-    image = torch.randn(1, 3, 32, 32)  # Imagen de ejemplo
+    image = torch.randn(1, 3, 128, 128)  # Imagen de ejemplo
     output = model(image)  # Forward pass
 
     # Imprimir la arquitectura del modelo
     print(model)
     print("Output shape:", output.shape)
-
-    trainable_params = sum(
-        p.numel()
-        for p in model.parameters()
-        if p.requires_grad
-    )
-
-    print(f"Parámetros entrenables: {trainable_params:,}")
+    print(f"Parámetros entrenables: {count_parameters(model):,}")

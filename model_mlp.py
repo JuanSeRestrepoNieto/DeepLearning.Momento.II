@@ -25,11 +25,12 @@ class MLPModel(torch.nn.Module):
 if __name__ == "__main__":
 
     # Crear un modelo MLP
-    input_size = 32 * 32 * 3  # Tamaño de la imagen
-    output_size = 10  # Número de clases
+    img_size = 128
+    input_size = img_size * img_size * 3  # Tamaño de la imagen
+    output_size = 6  # Número de clases
     model = MLPModel(input_size, output_size)
 
-    image = torch.randn(1, 3, 32, 32)  # Imagen de ejemplo
+    image = torch.randn(1, 3, img_size, img_size)  # Imagen de ejemplo
     output = model(torch.flatten(image, 1))  # Forward pass
 
     # Imprimir la arquitectura del modelo

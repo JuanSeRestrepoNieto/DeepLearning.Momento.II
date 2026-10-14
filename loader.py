@@ -1,14 +1,45 @@
 import torch
 import os
 from PIL import Image
-from torch.utils.data import Dataset, DataLoader
-from torch.utils.data import random_split
+from torch.utils.data import Dataset, DataLoader, Subset
 from torchvision import transforms
+from sklearn.model_selection import train_test_split
 import numpy as np
 
 
+KAGGLE_DATASET  = "figolm10/the-birds"
+LOCAL_DATA_DIR  = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "the-birds")
+IMG_EXTENSIONS  = (".jpg", ".jpeg", ".png")
 
-class CIFAR10Dataset(Dataset):
+
+def find_dataset_root(path):
+    """Busca la carpeta cuyos subdirectorios (uno por clase) contienen las imágenes."""
+
+    for current, dirs, _ in os.walk(path):
+        dirs[:] = sorted(d for d in dirs if not d.startswith("."))
+        has_images = [
+            any(f.lower().endswith(IMG_EXTENSIONS) for f in os.listdir(os.path.join(current, d)))
+            for d in dirs
+        ]
+        if len(dirs) > 1 and all(has_images):
+            return current
+
+    raise FileNotFoundError(f"No se encontró una carpeta con subcarpetas de imágenes en {path}")
+
+
+def get_data_dir(local_dir=LOCAL_DATA_DIR):
+    """Retorna la ruta del dataset; si no existe localmente lo descarga de Kaggle con kagglehub."""
+
+    if os.path.isdir(local_dir):
+        return find_dataset_root(local_dir)
+
+    import kagglehub
+    path = kagglehub.dataset_download(KAGGLE_DATASET)
+
+    return find_dataset_root(path)
+
+
+class BirdsDataset(Dataset):
 
     def __init__(self, root_dir, transform=None, MLP=False):
 
@@ -16,9 +47,11 @@ class CIFAR10Dataset(Dataset):
         self.transform      = transform
         self.MLP            = MLP
 
-        # Obtener nombres de las clases
-        self.classes = sorted(os.listdir(root_dir))
-        self.classes.remove('.DS_Store')  # Eliminar archivo oculto si existe
+        # Obtener nombres de las clases (solo carpetas, se ignoran archivos ocultos como .DS_Store)
+        self.classes = sorted(
+            d for d in os.listdir(root_dir)
+            if os.path.isdir(os.path.join(root_dir, d)) and not d.startswith(".")
+        )
 
         # Asignar un número a cada clase
         self.class_to_idx = {
@@ -33,12 +66,17 @@ class CIFAR10Dataset(Dataset):
 
             class_dir = os.path.join(root_dir, clase)
 
-            for filename in os.listdir(class_dir):
+            for filename in sorted(os.listdir(class_dir)):
+
+                if not filename.lower().endswith(IMG_EXTENSIONS):
+                    continue
 
                 image_path  = os.path.join(class_dir, filename)
                 label       = self.class_to_idx[clase]
 
                 self.samples.append((image_path, label))
+
+        self.targets = [label for _, label in self.samples]
 
     def __len__(self):
 
@@ -51,70 +89,136 @@ class CIFAR10Dataset(Dataset):
         # Cargar imagen
         image = Image.open(image_path).convert("RGB")
 
-        image = np.array(image)                     # Convertir a array de numpy
-        image = image.astype("float32") / 255.0     # Normalizar la imagen
-
-        # Aplicar transformaciones
+        # Aplicar transformaciones (Resize -> ToTensor -> Normalize)
         if self.transform:
             image = self.transform(image)
 
-         # Aplanar la imagen si MLP es True
+        # Aplanar la imagen si MLP es True
         if self.MLP:
             image = image.flatten()
 
         return image, label
 
 
+def compute_mean_std(dataset, indices, batch_size=64):
+    """Media y desviación estándar por canal calculadas solo sobre los índices dados (train)."""
+
+    loader      = DataLoader(Subset(dataset, indices), batch_size=batch_size, shuffle=False)
+    n_pixels    = 0
+    channel_sum = torch.zeros(3)
+    channel_sq  = torch.zeros(3)
+
+    for images, _ in loader:
+        n_pixels    += images.size(0) * images.size(2) * images.size(3)
+        channel_sum += images.sum(dim=[0, 2, 3])
+        channel_sq  += (images ** 2).sum(dim=[0, 2, 3])
+
+    mean = channel_sum / n_pixels
+    std  = torch.sqrt(channel_sq / n_pixels - mean ** 2)
+
+    return mean.tolist(), std.tolist()
+
+
 class Loader():
 
-    def __init__(self, root_dir, transform=None, MLP=False):
+    def __init__(self, root_dir, img_size=128, splits=(0.70, 0.15, 0.15), seed=42, MLP=False):
 
-        self.path_train = os.path.join(root_dir, "train")
-        self.path_test  = os.path.join(root_dir, "test")
+        train_frac, val_frac, test_frac = splits
 
-        if transform is None:
-            transform = transforms.ToTensor()
+        self.root_dir   = root_dir
+        self.img_size   = img_size
 
-        # Crear datasets
-        self.train_dataset = CIFAR10Dataset(self.path_train, transform=transform, MLP=MLP)
-        self.test_dataset  = CIFAR10Dataset(self.path_test, transform=transform, MLP=MLP)
+        # Dataset sin transformaciones, solo para conocer etiquetas y clases
+        base_dataset    = BirdsDataset(root_dir)
+        self.classes    = base_dataset.classes
+        targets         = np.array(base_dataset.targets)
+        indices         = np.arange(len(base_dataset))
 
-        # Tamaños
-        train_size = int(0.8 * len(self.train_dataset))
-        val_size = len(self.train_dataset) - train_size
-
-        # División
-        self.train_dataset, self.val_dataset = random_split(
-            self.train_dataset,
-            [train_size, val_size]
+        # División estratificada: train / (val + test), luego val / test
+        self.train_idx, temp_idx = train_test_split(
+            indices,
+            test_size=val_frac + test_frac,
+            stratify=targets,
+            random_state=seed,
+        )
+        self.val_idx, self.test_idx = train_test_split(
+            temp_idx,
+            test_size=test_frac / (val_frac + test_frac),
+            stratify=targets[temp_idx],
+            random_state=seed,
         )
 
-    def train_loader(self, batch_size=32, shuffle=True):
+        # Media y desviación estándar calculadas solo con el conjunto de entrenamiento
+        raw_transform = transforms.Compose([
+            transforms.Resize((img_size, img_size)),
+            transforms.ToTensor(),
+        ])
+        self.mean, self.std = compute_mean_std(BirdsDataset(root_dir, transform=raw_transform), self.train_idx)
+
+        # Transformaciones finales (sin Data Augmentation)
+        self.transform = transforms.Compose([
+            transforms.Resize((img_size, img_size)),
+            transforms.ToTensor(),
+            transforms.Normalize(self.mean, self.std),
+        ])
+
+        # Crear datasets
+        self.dataset        = BirdsDataset(root_dir, transform=self.transform, MLP=MLP)
+        self.train_dataset  = Subset(self.dataset, self.train_idx)
+        self.val_dataset    = Subset(self.dataset, self.val_idx)
+        self.test_dataset   = Subset(self.dataset, self.test_idx)
+
+    def split_counts(self):
+        """Cantidad de imágenes por clase en cada conjunto."""
+
+        targets = np.array(self.dataset.targets)
+        counts  = {}
+
+        for name, idx in [("train", self.train_idx), ("val", self.val_idx), ("test", self.test_idx)]:
+            counts[name] = {
+                clase: int((targets[idx] == i).sum())
+                for i, clase in enumerate(self.classes)
+            }
+
+        return counts
+
+    def train_loader(self, batch_size=32, shuffle=True, num_workers=0):
 
         return DataLoader(
             self.train_dataset,
             batch_size=batch_size,
             shuffle=shuffle,
+            num_workers=num_workers,
         )
 
-    def val_loader(self, batch_size=32, shuffle=True):
+    def val_loader(self, batch_size=32, shuffle=False, num_workers=0):
 
         return DataLoader(
             self.val_dataset,
             batch_size=batch_size,
             shuffle=shuffle,
+            num_workers=num_workers,
         )
 
-    def test_loader(self, batch_size=32, shuffle=False):
+    def test_loader(self, batch_size=32, shuffle=False, num_workers=0):
 
         return DataLoader(
             self.test_dataset,
             batch_size=batch_size,
             shuffle=shuffle,
+            num_workers=num_workers,
         )
 
-if __name__ == "__main__":
-    # Example usage of the loader module
-    # Load a model or data here
-    print("Loader module executed.")
 
+if __name__ == "__main__":
+
+    data_dir = get_data_dir()
+    loader   = Loader(root_dir=data_dir)
+
+    print(f"Ruta del dataset: {data_dir}")
+    print(f"Clases ({len(loader.classes)}): {loader.classes}")
+    print(f"Train: {len(loader.train_dataset)} | Val: {len(loader.val_dataset)} | Test: {len(loader.test_dataset)}")
+    print(f"Mean: {loader.mean} | Std: {loader.std}")
+
+    images, labels = next(iter(loader.train_loader()))
+    print(f"Batch de imágenes: {list(images.shape)} | Batch de etiquetas: {list(labels.shape)}")

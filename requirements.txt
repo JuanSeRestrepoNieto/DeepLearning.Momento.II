@@ -1,0 +1,13 @@
+# Mac Intel (x86_64): PyTorch 2.2.2 es la última versión con wheels -> usar Python 3.12 y numpy<2
+torch==2.2.2
+torchvision==0.17.2
+numpy<2
+pillow
+matplotlib
+seaborn
+scikit-learn
+pandas
+jupyter
+nbconvert
+ipykernel
+kagglehub
